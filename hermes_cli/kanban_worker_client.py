@@ -9,6 +9,7 @@ except ModuleNotFoundError as exc:
 
 import asyncio
 from dataclasses import dataclass
+import errno
 import os
 from pathlib import Path
 import sys
@@ -186,7 +187,14 @@ def _submit():
             os.environ.pop(key, None)
         return asyncio.run(run(params, board_db))
     except (KeyError, ValueError, OSError) as exc:
-        print(f'Kanban owner refused: {exc}', file=sys.stderr)
+        if isinstance(exc, OSError) and exc.errno == errno.ENOSPC:
+            print(
+                'worker_failed: DISK FULL (ENOSPC) — session state could not be saved. '
+                'Free disk space; this is not an ownership or lock conflict.',
+                file=sys.stderr,
+            )
+        else:
+            print(f'Kanban owner refused: {exc}', file=sys.stderr)
         return 1
 
 
