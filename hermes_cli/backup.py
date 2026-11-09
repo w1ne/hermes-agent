@@ -1077,6 +1077,12 @@ def _revive_gateway_after_import(hermes_root: Path) -> None:
     revived when the restore landed in the default home or no other install exists: a sandbox or
     profile restore must not install a second gateway on the default service name.
     """
+    # A named profile restore must never install a second gateway. This is known from
+    # the destination path and needs no probe of the unrelated default-home secrets
+    # (which tests forbid and a restricted profile may not be allowed to read).
+    if hermes_root.parent.name == 'profiles':
+        print("\nRestored into a named profile home; leaving gateway service unchanged.")
+        return
     native_default = _get_platform_default_hermes_home()
     if hermes_root != native_default and any(
             (native_default / marker).exists() for marker in ("config.yaml", ".env", "state.db")):
