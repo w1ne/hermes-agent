@@ -327,7 +327,13 @@ def admission_display(payload):
 
 
 def _route_identity(source):
-    return {key: value for key, value in source.to_dict().items() if key != 'message_id'}
+    # A human chat source is persisted when the route first opens, but subsequent platform
+    # updates change its display text (Telegram topic titles, group name, user name). The
+    # native admission's connector proof and route check authorize the wake; comparing those
+    # mutable labels would reject a legitimate completion even on the exact same thread.
+    # Keep every security/routing field, including user_id, scope_id, profile, and is_bot.
+    display_fields = {'message_id', 'chat_name', 'chat_topic', 'user_name'}
+    return {key: value for key, value in source.to_dict().items() if key not in display_fields}
 
 
 def committed_route_envelope(authority, entry):

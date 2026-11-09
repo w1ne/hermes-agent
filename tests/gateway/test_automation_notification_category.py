@@ -202,7 +202,28 @@ async def test_native_completion_wake_admits_when_source_differs_only_by_message
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('field', ['user_name', 'user_id', 'thread_id'])
+@pytest.mark.parametrize('field,new_value', [
+    ('user_name', 'Renamed User'),
+    ('chat_name', 'Renamed Group'),
+    ('chat_topic', 'General'),
+])
+async def test_native_completion_wake_accepts_display_label_drift(tmp_path, monkeypatch, field, new_value):
+    # Persisted origins can retain an old topic title; that is not a route or credential change.
+    from gateway.session_identity import replace_source
+    runner, authority, adapter, source, metadata = await _native_owner(tmp_path, monkeypatch, 'human-1')
+    try:
+        route = metadata['gateway_session_key']
+        runner.session_store._entries[route].origin = replace_source(source, **{field: new_value})
+        event = MessageEvent(text='notice', source=runner.session_store._entries[route].origin,
+                             internal=True, metadata=dict(metadata))
+        receipt = await authority.admit_automation(adapter, event, 'notice')
+        assert get_session_admission(authority.db, admission_id=receipt.admission_id)['status'] == 'queued'
+    finally:
+        authority.db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('field', ['user_id', 'thread_id'])
 async def test_native_completion_wake_refuses_other_source_drift(tmp_path, monkeypatch, field):
     _runner, authority, adapter, _source, metadata = await _native_owner(tmp_path, monkeypatch, 'human-1')
     try:
@@ -236,8 +257,8 @@ async def test_refused_watch_wake_logs_the_refusal_code(tmp_path, monkeypatch, c
     runner, authority, _adapter, source, metadata = await _native_owner(tmp_path, monkeypatch, 'human')
     try:
         route = metadata['gateway_session_key']
-        # Point the routing entry at a renamed user: the wake's source no longer matches the commit.
-        runner.session_store._entries[route].origin = replace_source(source, user_name='renamed')
+        # Point the routing entry at a different user ID: the wake must still fail closed.
+        runner.session_store._entries[route].origin = replace_source(source, user_id='other-owner')
         evt = {'type': 'completion', 'session_id': 'proc_x', 'session_key': route, 'platform': 'discord',
                'chat_id': '42', 'chat_type': 'dm', 'exit_code': 0, 'output': 'done', 'started_at': 1.0,
                'parent_session_id': metadata['gateway_session_id']}
