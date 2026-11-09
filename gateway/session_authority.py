@@ -28,6 +28,8 @@ from hermes_state_runtime import (
 
 # Capped backoff for a claim refused by transient storage (writer lock, full disk).
 _CLAIM_RETRY_MIN_S, _CLAIM_RETRY_MAX_S = 0.25, 5.0
+# A disconnected native bot may need time to reconnect; retry without weakening authorization.
+_NATIVE_REAUTH_RETRY_MIN_S, _NATIVE_REAUTH_RETRY_MAX_S = 2.0, 60.0
 # Longest a settled turn's adapter may hold its adopted crash marker before the follower is claimed.
 _MARKER_RELEASE_WAIT_S = 60.0
 # True in the admitting task once ``admit_native``'s shielded ledger write began: a caller cancelled
@@ -1117,6 +1119,25 @@ class SessionAuthority:
                     # person's lost turn keeps the FIFO paused for them to resolve.
                     from gateway.session_unattended_unknown import settle_unattended_unknown
                     if await settle_unattended_unknown(self, ref):
+                        continue
+                if exc.reason == 'not_found':
+                    # A native transport can disappear between admission and the queued head's
+                    # re-authorization (e.g. the Telegram adapter reconnects). The admission is
+                    # still durable. Keep this FIFO alive and re-check the CURRENT connector on
+                    # each retry; NEVER claim or execute a row while authorization fails. Other
+                    # missing resources remain hard refusals, as before.
+                    pending = list_session_admissions(self.db, session_id=ref.session_id)
+                    first = next((item for item in pending if item['status'] == 'queued'), None)
+                    if first is not None and 'native_text_v1' in first['payload']:
+                        self._pause(ref, 'reauthorization_retry')
+                        if self._drain_stopping(ref, live):
+                            return None
+                        backoff = min(max(backoff * 2, _NATIVE_REAUTH_RETRY_MIN_S), _NATIVE_REAUTH_RETRY_MAX_S)
+                        import logging
+                        logging.getLogger(__name__).warning(
+                            'Session %s native connector not found; retrying re-authorization in %.1fs',
+                            ref.session_id, backoff)
+                        await asyncio.sleep(backoff)
                         continue
                 import logging
                 logging.getLogger(__name__).warning('Session %s paused: %s', ref.session_id, exc.reason)

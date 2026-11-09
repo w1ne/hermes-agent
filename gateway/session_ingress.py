@@ -197,6 +197,10 @@ def pause_notice(authority, ref, reason):
     if reason == 'session_busy':
         # Transient: queued behind work already running on this conversation (a worker execution).
         return '⏳ Your message is saved and will be answered when the work running in this conversation finishes.'
+    if reason == 'reauthorization_retry':
+        return ('⏳ Your message is saved. Hermes cannot currently verify the messaging connector. '
+                'It will retry automatically and process the queued messages only after authorization succeeds. '
+                'Use /reset only if you want to start a separate conversation.')
     if reason == 'unknown_execution':
         # GW-10: the way out is in this chat. /discard acknowledges the lost turn (never replayed)
         # through the same fenced resolve_unknown as Desktop/TUI, and the saved messages then run.
