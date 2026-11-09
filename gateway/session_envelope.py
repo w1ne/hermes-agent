@@ -319,7 +319,18 @@ async def check_native_route(runner, payload, session_id, available_source, adap
     entry = store.lookup_by_session_key(route)
     if entry is None or entry.session_id != session_id:
         raise RuntimeStoreError('admission_conflict')
-    if adapter is None or runner._adapter_for_source(event.source) is not adapter:
+    proven_adapter = runner._adapter_for_source(event.source)
+    if adapter is None and provenance is not None and entry.transport_profile is None:
+        # Legacy routes predate the persisted transport owner. The old routing entry's source
+        # cannot select a receiving bot under multiplexing, although its committed native
+        # envelope still contains a connector fingerprint and both homes. restore_native above
+        # has already verified that provenance against the CURRENT live adapter, and the checks
+        # above prove this row still owns the exact route. Only use that verified adapter when
+        # the live source has no pinned owner; never substitute for a known transport identity.
+        from gateway.session_identity import identity_of
+        if identity_of(available_source) is None:
+            adapter = proven_adapter
+    if adapter is None or proven_adapter is not adapter:
         raise RuntimeStoreError('not_found')
     if event.source.platform.value == 'webhook':
         from gateway.platforms.webhook_delivery import route_digest, validate_destination
