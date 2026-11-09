@@ -30,6 +30,8 @@ from hermes_state_runtime import (
 
 # Capped backoff for a claim refused by transient storage (writer lock, full disk).
 _CLAIM_RETRY_MIN_S, _CLAIM_RETRY_MAX_S = 0.25, 5.0
+# Retry when a native adapter is temporarily unavailable; never skip fresh authorization.
+_NATIVE_REAUTH_RETRY_MIN_S, _NATIVE_REAUTH_RETRY_MAX_S = 2.0, 60.0
 # Longest a settled turn's adapter may hold its adopted crash marker before the follower is claimed.
 _MARKER_RELEASE_WAIT_S = 60.0
 # True in the admitting task once ``admit_native``'s shielded ledger write began: a caller cancelled
@@ -1229,6 +1231,25 @@ class SessionAuthority:
                         # person's lost turn keeps the FIFO paused for them to resolve.
                         from gateway.session_unattended_unknown import settle_unattended_unknown
                         if await settle_unattended_unknown(self, ref):
+                            continue
+                    if exc.reason == 'not_found':
+                        # A native transport may disconnect after a turn is admitted. Keep its
+                        # durable FIFO intact, retry the CURRENT connector, and only claim
+                        # when normal authorization succeeds. Other missing-resource errors
+                        # retain the existing fail-closed behavior.
+                        pending = list_session_admissions(self.db, session_id=ref.session_id)
+                        first = next((item for item in pending if item['status'] == 'queued'), None)
+                        if first is not None and 'native_text_v1' in first['payload']:
+                            self._pause(ref, 'reauthorization_retry')
+                            if self._drain_stopping(ref, live):
+                                return None
+                            backoff = min(max(backoff * 2, _NATIVE_REAUTH_RETRY_MIN_S),
+                                          _NATIVE_REAUTH_RETRY_MAX_S)
+                            import logging
+                            logging.getLogger(__name__).warning(
+                                'Session %s native connector not found; retrying re-authorization in %.1fs',
+                                ref.session_id, backoff)
+                            await asyncio.sleep(backoff)
                             continue
                     if exc.reason == 'admission_conflict':
                         # A verdict on the head alone (its route or binding moved under it) that every drain
