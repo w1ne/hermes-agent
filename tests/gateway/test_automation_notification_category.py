@@ -212,9 +212,10 @@ async def test_native_completion_wake_accepts_display_label_drift(tmp_path, monk
         event = MessageEvent(text='notice', source=runner.session_store._entries[route].origin,
                              internal=True, metadata=dict(metadata))
         receipt = await authority.admit_automation(adapter, event, 'notice')
-        assert get_session_admission(authority.db, admission_id=receipt.admission_id)['status'] == 'queued'
+        row = admission_row(authority.persistence.admissions.get(admission_id=receipt.admission_id))
+        assert row is not None and row['status'] == 'queued'
     finally:
-        authority.db.close()
+        authority.runner.session_store.close_all_db_handles()
 
 
 @pytest.mark.asyncio
