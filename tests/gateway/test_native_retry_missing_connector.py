@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from hermes_state_runtime import RuntimeStoreError
+from persistence.core.errors import AuthorityRefusal
 from gateway.session_authority import SessionAuthority
 from gateway.session_ingress import pause_notice
 
@@ -20,8 +20,11 @@ async def test_missing_native_connector_retries_with_fresh_authorization(
 ):
     import gateway.session_authority as mod
 
-    pending = [{'status': 'queued', 'payload': {'native_text_v1': {}} if native else {'text': 'local'}}]
-    monkeypatch.setattr(mod, 'list_session_admissions', lambda db, *, session_id: pending)
+    pending = [SimpleNamespace(status='queued', payload={
+        'native_text_v1': {}} if native else {'text': 'local'})]
+    fake_persistence = SimpleNamespace(admissions=SimpleNamespace(
+        list=lambda *, session_id: pending))
+    monkeypatch.setattr(mod, 'authority_persistence', lambda authority: fake_persistence)
     monkeypatch.setattr(mod, '_NATIVE_REAUTH_RETRY_MIN_S', 0.001)
     monkeypatch.setattr(mod, '_NATIVE_REAUTH_RETRY_MAX_S', 0.003)
     calls = []
@@ -29,7 +32,7 @@ async def test_missing_native_connector_retries_with_fresh_authorization(
     async def claim(ref, live):
         calls.append(1)
         if len(calls) < retries or retries == 1:
-            raise RuntimeStoreError(reason)
+            raise AuthorityRefusal(reason)
         return ('claimed', pending[0])
 
     authority = SimpleNamespace(
@@ -94,5 +97,5 @@ async def test_legacy_native_route_uses_only_authenticated_recorded_connector(
         result = await envelope.check_native_route(runner, payload, 's', available, None)
         assert result == (source, 'r')
     else:
-        with pytest.raises(RuntimeStoreError, match='not_found'):
+        with pytest.raises(AuthorityRefusal, match='not_found'):
             await envelope.check_native_route(runner, payload, 's', available, None)

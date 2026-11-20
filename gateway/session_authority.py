@@ -1303,9 +1303,9 @@ class SessionAuthority:
                         # durable FIFO intact, retry the CURRENT connector, and only claim
                         # when normal authorization succeeds. Other missing-resource errors
                         # retain the existing fail-closed behavior.
-                        pending = list_session_admissions(self.db, session_id=ref.session_id)
-                        first = next((item for item in pending if item['status'] == 'queued'), None)
-                        if first is not None and 'native_text_v1' in first['payload']:
+                        pending = authority_persistence(self).admissions.list(session_id=ref.session_id)
+                        first = next((item for item in pending if item.status == 'queued'), None)
+                        if first is not None and 'native_text_v1' in first.payload:
                             self._pause(ref, 'reauthorization_retry')
                             if self._drain_stopping(ref, live):
                                 return None
