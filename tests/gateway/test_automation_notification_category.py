@@ -198,6 +198,27 @@ async def test_native_completion_wake_admits_when_source_differs_only_by_message
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('field,value', [
+    ('user_name', 'Renamed User'), ('chat_name', 'Renamed Group'), ('chat_topic', 'General'),
+])
+async def test_native_completion_wake_accepts_display_label_drift(tmp_path, monkeypatch, field, value):
+    # The latest committed sender and connector are authoritative. The stored session
+    # origin can retain an old display name or a pre-topic-title label.
+    from gateway.session_identity import replace_source
+    runner, authority, adapter, source, metadata = await _native_owner(tmp_path, monkeypatch, 'human-1')
+    try:
+        route = metadata['gateway_session_key']
+        runner.session_store._entries[route].origin = replace_source(source, **{field: value})
+        event = MessageEvent(text='notice', source=runner.session_store._entries[route].origin,
+                             internal=True, metadata=dict(metadata))
+        receipt = await authority.admit_automation(adapter, event, 'notice')
+        row = admission_row(authority.persistence.admissions.get(admission_id=receipt.admission_id))
+        assert row is not None and row['status'] == 'queued'
+    finally:
+        authority.runner.session_store.close_all_db_handles()
+
+
+@pytest.mark.asyncio
 async def test_native_completion_wake_refuses_another_route(tmp_path, monkeypatch):
     _runner, authority, adapter, _source, metadata = await _native_owner(tmp_path, monkeypatch, 'human-1')
     try:
