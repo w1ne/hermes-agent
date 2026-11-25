@@ -106,7 +106,7 @@ _EXCLUDED_ROOT_DIRS = LOCAL_RUNTIME_ROOT_DIRS | (PM_RUNTIME_ROOT_DIRS - {"cache"
 # Browser Use CLI profile dir (browser.backend: browser-use): Chromium user-data with Login Data / Cookies;
 # the secret caches and Photon sidecar token. Root-scoped like models/ — a skill's own browser_profiles/ is
 # user data. Backup-only: do not fold into LOCAL_RUNTIME_ROOT_DIRS (clone-all identity contract).
-_EXCLUDED_BACKUP_ROOT_DIRS = frozenset({"browser_profiles", *SECRET_CACHE_FILES})
+_EXCLUDED_BACKUP_ROOT_DIRS = frozenset({"browser_profiles", "chrome-debug", "chrome-real-profile", *SECRET_CACHE_FILES})
 
 # ``cache/`` at those same roots mixes regenerable state (model/plugin catalogs, stamps, browser
 # profiles with locked SQLite, tool-output spill) with durable artifacts nothing can rebuild: media
@@ -959,6 +959,12 @@ def _revive_gateway_after_import(hermes_root: Path) -> None:
     revived when the restore landed in the default home or no other install exists: a sandbox or
     profile restore must not install a second gateway on the default service name.
     """
+    # A named profile restore must never install a second gateway. This is known from
+    # the destination path and needs no probe of the unrelated default-home secrets
+    # (which tests forbid and a restricted profile may not be allowed to read).
+    if hermes_root.parent.name == 'profiles':
+        print("\nRestored into a named profile home; leaving gateway service unchanged.")
+        return
     native_default = _get_platform_default_hermes_home()
     if hermes_root != native_default and (any((native_default / marker).exists() for marker in ("config.yaml", ".env")) or (
             store_exists(profile_scope(home=native_default)))):

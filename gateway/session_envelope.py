@@ -349,7 +349,15 @@ async def check_native_route(runner, payload, session_id, available_source, adap
     entry = store.lookup_by_session_key(route)
     if entry is None or entry.session_id != session_id:
         raise AuthorityRefusal('admission_conflict')
-    if adapter is None or runner._adapter_for_source(event.source) is not adapter:
+    proven_adapter = runner._adapter_for_source(event.source)
+    if adapter is None and provenance is not None and entry.transport_profile is None:
+        # Legacy routes have no persisted transport owner. The restored native
+        # envelope must still prove current connector provenance and route ownership.
+        # Do not guess an adapter for routes with a pinned transport identity.
+        from gateway.session_identity import identity_of
+        if identity_of(available_source) is None:
+            adapter = proven_adapter
+    if adapter is None or proven_adapter is not adapter:
         raise AuthorityRefusal('not_found')
     if event.source.platform.value == 'webhook':
         from gateway.platforms.webhook_delivery import route_digest, validate_destination
