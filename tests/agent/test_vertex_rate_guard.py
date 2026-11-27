@@ -67,3 +67,15 @@ def test_existing_sqlite_gate_blocks_another_process(tmp_path):
     proc.join(timeout=10)
     assert proc.exitcode == 0
     assert q.get(timeout=2) is False
+
+
+def test_ongoing_outage_probes_no_less_than_every_ten_minutes(tmp_path):
+    with patch.object(guard, "get_default_hermes_root", return_value=tmp_path):
+        delay = guard.record_failure("vertex", MODEL, URL)
+        for _ in range(9):
+            with guard._store() as db:
+                db.execute("UPDATE routes SET next_probe=0, lease=0")
+                db.commit()
+            assert guard.admit_probe("vertex", MODEL, URL)
+            delay = guard.record_failure("vertex", MODEL, URL)
+        assert 590 <= delay <= 601

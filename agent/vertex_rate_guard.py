@@ -15,6 +15,8 @@ from hermes_constants import get_default_hermes_root
 
 logger = logging.getLogger(__name__)
 _PROBE_LEASE_SECONDS = 120
+# Keep looking for recovered shared capacity; a four-hour blackout hides available Neon.
+_VERTEX_BACKOFF_CAP_SECONDS = 600
 
 
 def _key(provider: str, model: str, base_url: str) -> str:
@@ -85,12 +87,12 @@ def record_failure(provider: str, model: str, base_url: str) -> float:
             row = db.execute("SELECT failures, next_probe, lease FROM routes WHERE route=?", (key,)).fetchone()
             now = time.time()
             # In-flight requests can return 429 after the first rejection.
-            # They are not recovery probes and must not drive the global delay to 4h.
+            # They are not recovery probes and must not extend the cooldown.
             if row and row[1] > now and row[2] <= now:
                 db.commit()
                 return row[1] - now
             failures = min((row[0] if row else 0) + 1, 9)
-            delay = min(60 * 2 ** (failures - 1), 14400)
+            delay = min(60 * 2 ** (failures - 1), _VERTEX_BACKOFF_CAP_SECONDS)
             next_probe = max(now + delay, row[1] if row else 0)
             db.execute("INSERT INTO routes(route, failures, next_probe, lease) VALUES(?,?,?,0) "
                        "ON CONFLICT(route) DO UPDATE SET failures=excluded.failures, "

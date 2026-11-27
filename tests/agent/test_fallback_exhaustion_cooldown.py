@@ -193,6 +193,20 @@ class TestRateLimitBackoffEscalation:
             agent._try_activate_fallback(reason=FailoverReason.rate_limit)
         assert agent._rate_limited_until == frozen + 14400
 
+    def test_vertex_capacity_backoff_caps_at_ten_minutes(self):
+        """A persistently capacity-limited Vertex route is probed every <= 10 minutes."""
+        from types import SimpleNamespace
+        from agent.fallback_cooldown import _arm_rate_limit_cooldown
+        agent = SimpleNamespace(provider="vertex", model="google/gemini-4-neon",
+                                base_url="https://aiplatform.googleapis.com/v1beta1/",
+                                _fallback_activated=False, _rate_limit_backoff_count=12)
+        with (
+            patch("agent.fallback_cooldown.time.monotonic", return_value=1000.0),
+            patch("agent.vertex_rate_guard.record_failure", return_value=600.0),
+        ):
+            assert _arm_rate_limit_cooldown(agent, FailoverReason.rate_limit) == 600
+        assert agent._rate_limited_until == 1600.0
+
     def test_backoff_counter_resets_only_after_valid_primary_response(self):
         """Selecting the primary must not reset its failure history; a validated
         provider response must clear it, while a failed recovery must escalate."""

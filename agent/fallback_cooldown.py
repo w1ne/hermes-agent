@@ -65,7 +65,8 @@ def _arm_rate_limit_cooldown(
 
     ``reset_at`` is an absolute wall-clock timestamp while ``_rate_limited_until`` is monotonic;
     convert through a duration so wall-clock epoch values never enter the monotonic comparison.
-    Missing, invalid, or expired provider resets retain the 60s → 2m → ... → 4h fallback.
+    Missing, invalid, or expired resets use 60s → 2m → ...; Vertex 429s cap at
+    ten minutes so recovered shared capacity remains discoverable (other routes: 4h).
     Only arm when leaving the primary: chain-switching from an active fallback means the primary
     was not the failing source. Return the armed cooldown in seconds, or None when not armed.
     """
@@ -80,7 +81,14 @@ def _arm_rate_limit_cooldown(
         backoff_seconds = math.ceil(provider_delay)
         source = "provider reset"
     else:
-        backoff_seconds = min(60 * (2 ** backoff_count), 14400)
+        # Shared Vertex PayGo capacity can recover without a quota reset event.
+        # Probe at least every ten minutes; other providers retain their 4h cap.
+        is_vertex_capacity = (
+            str(getattr(agent, "provider", "") or "").lower() == "vertex"
+            and reason in (FailoverReason.rate_limit, FailoverReason.upstream_rate_limit)
+        )
+        cap = 600 if is_vertex_capacity else 14400
+        backoff_seconds = min(60 * (2 ** min(backoff_count, 8)), cap)
         source = "exponential fallback"
     agent._rate_limited_until = time.monotonic() + backoff_seconds
     if reason in (FailoverReason.rate_limit, FailoverReason.upstream_rate_limit):
