@@ -3696,8 +3696,8 @@ def _refresh_provider_credentials(provider: str, *, failed_api_key: str = "") ->
 def _auth_refresh_provider_for_route(
     resolved_provider: Optional[str], client_base_url: str, effective_provider: str = "",
 ) -> str:
-    """Provider whose short-lived credentials should be refreshed; auto-routed calls keep
-    ``resolved_provider == "auto"``, so infer the backend from the client's base URL."""
+    """Provider whose short-lived credentials should be refreshed; auto routes retain the
+    selected client identity when its host is not listed in the provider registry."""
     normalized = _normalize_aux_provider(resolved_provider)
     if normalized and normalized != "auto":
         return normalized
@@ -3706,7 +3706,7 @@ def _auth_refresh_provider_for_route(
     # an XAI_API_KEY 401 must not spend a stale ``xai-oauth`` grant's refresh and switch routes.
     if host_provider and host_provider == f"{_normalize_aux_provider(effective_provider)}-oauth":
         return normalized
-    return host_provider or normalized
+    return host_provider or _normalize_aux_provider(effective_provider) or normalized
 
 
 def _fallback_chain_entry(task: Optional[str], fb_label: str) -> Optional[dict[str, Any]]:
@@ -4648,7 +4648,7 @@ def _build_bedrock_client(provider: str, model: Optional[str], *, raw_codex: boo
 def _build_vertex_client(provider: str, model: Optional[str]) -> tuple[Optional[Any], Optional[str]]:
     """Google Vertex AI: Gemini via the OpenAI-compatible endpoint with an OAuth2 bearer (standard OpenAI client)."""
     try:
-        from agent.vertex_adapter import get_vertex_config, has_vertex_credentials
+        from agent.vertex_adapter import get_vertex_config, has_vertex_credentials, vertex_access_token
     except ImportError:
         logger.warning("resolve_provider_client: vertex requested but google-auth not installed")
         return None, None
@@ -4663,7 +4663,7 @@ def _build_vertex_client(provider: str, model: Optional[str]) -> tuple[Optional[
     try:
         # Aliased import: a bare `from openai import OpenAI` would shadow the module-level lazy proxy.
         from openai import OpenAI as _VertexOpenAI
-        client = _VertexOpenAI(api_key=token, base_url=base_url)
+        client = _VertexOpenAI(api_key=vertex_access_token, base_url=base_url)
     except Exception as exc:
         logger.warning("resolve_provider_client: cannot create Vertex client: %s", exc)
         return None, None
