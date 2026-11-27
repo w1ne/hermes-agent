@@ -3128,9 +3128,7 @@ def _mark_provider_unhealthy(
     provider: str, ttl: Optional[float] = None, *, base_url: Optional[str] = None,
     reason: str = _AUX_UNHEALTHY_PAYMENT_REASON, level: int = logging.WARNING, model: Optional[str] = None,
 ) -> None:
-    """Hide one provider endpoint until the TTL expires. ``reason`` is what the log says and what the
-    skip line echoes: absent credentials are an expected state (DEBUG), a confirmed 402 is a fault
-    (WARNING) — the old fixed payment wording sent local-only users chasing billing (#64144)."""
+    """Hide an unhealthy provider endpoint for a fixed TTL, preserving the reason."""
     label = _normalize_chain_label(provider)
     if not label:
         return
@@ -3152,6 +3150,10 @@ def _is_provider_unhealthy(label: str, base_url: Optional[str] = None, model: Op
     """True iff this provider endpoint (or that ``model`` on it) is unhealthy and unexpired; lazily evicts expired entries."""
     if not label:
         return False
+    if _normalize_chain_label(label) == "vertex" and model and base_url:
+        from agent.vertex_rate_guard import seconds_blocked
+        if seconds_blocked("vertex", model, str(base_url)) > 0:
+            return True
     if model and _is_provider_unhealthy(label, base_url):
         return True
     key = _unhealthy_cache_key(label, base_url, model)
@@ -7648,10 +7650,7 @@ def _next_fallback_after_quarantine(
     task: Optional[str], resolved_provider: str, is_auto: bool, route: _LadderRoute,
     failed_model: Optional[str], failure_scope: Any, *, task_chain_only: bool = False, skip_lanes=(),
 ) -> tuple[Optional[Any], Optional[str], str]:
-    """Next candidate after a fallback entry was quarantined mid-request (dead credential or a
-    capacity error): remaining configured entries (task chain, then main chain on auto) before the
-    discovery chain, past this walk's ``skip_lanes``. ``task_chain_only`` (explicit-provider auth error)
-    stops at the task chain — the user never opted that task into discovery or the main model."""
+    """Select the next eligible configured or discovery fallback after quarantine."""
     walk = dict(reason="fallback candidate unavailable", failed_base_url=route.base_info,
                 failure_scope=failure_scope, skip_lanes=skip_lanes)
     fb = _try_configured_fallback_chain(task, resolved_provider or "auto", failed_model=failed_model, **walk)
@@ -7665,11 +7664,7 @@ def _next_fallback_after_quarantine(
 
 
 def _ladder_provider_fallback(failure: aux_errors.Failure, route: _LadderRoute, *, rung_spent: bool = False):
-    """Last rung: other providers (per-task chain; then auto: main fallback chain + discovery
-    chain, explicit: main-agent-model net). Returns the response or None.
-    Every fallback label except auth bypasses the explicit-provider gate: the provider cannot serve
-    this request regardless of user intent. An auth error from an explicit provider may only use the
-    task's own configured fallback_chain; it never implies an unconfigured provider hop."""
+    """Use other providers; explicit auth errors stay within the task's fallback chain."""
     task, tag, resolved_provider, first_err = route.task, route.tag, route.resolved_provider, failure.error
     is_auto = resolved_provider in {"auto", "", None}
     reason = aux_errors.fallback_label(failure, rung_spent=rung_spent)
@@ -7681,6 +7676,11 @@ def _ladder_provider_fallback(failure: aux_errors.Failure, route: _LadderRoute, 
     )
     if reason is None or not (is_auto or is_capacity_error or explicit_auth_with_task_chain):
         return None
+    if reason == "rate limit":
+        sender = _failure_sender(route, failure)
+        if _classification_provider(sender, resolved_provider, route.main_runtime) == "vertex":
+            from agent.vertex_rate_guard import record_failure
+            record_failure("vertex", route.final_model, str(getattr(sender, "base_url", "") or route.base_info or ""))
     if reason == "payment error":
         # Mark the concrete backend (not the "auto" label) that sent the failed request unhealthy, so later aux
         # calls skip it instead of paying another doomed RTT: a rebuilt retry may have reached another backend.

@@ -243,6 +243,14 @@ def nous_rate_limit_guard(
             compression_attempts=compression_attempts, result=result,
         )
 
+    if agent.provider == "vertex":
+        from agent.vertex_rate_guard import admit_probe
+        if not admit_probe(agent.provider, agent.model, str(agent.base_url or "")):
+            if agent._try_activate_fallback():
+                active_system_prompt = _arm_fallback_restart(
+                    agent, api_messages, active_system_prompt, _retry)
+                return _verdict("break")
+            # With no usable fallback, preserve the normal request path.
     if agent.provider == "nous":
         # A gateway ``x-nous-model-switch`` recorded on the previous response moves this session
         # (and the config default, when it still names the free tier's model) before the next call.

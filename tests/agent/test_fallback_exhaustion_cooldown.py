@@ -193,9 +193,9 @@ class TestRateLimitBackoffEscalation:
             agent._try_activate_fallback(reason=FailoverReason.rate_limit)
         assert agent._rate_limited_until == frozen + 14400
 
-    def test_backoff_counter_resets_on_successful_primary_restore(self):
-        """A successful restore_primary_runtime resets the backoff counter,
-        so the next rate-limit starts back at the 60s base."""
+    def test_backoff_counter_resets_only_after_valid_primary_response(self):
+        """Selecting the primary must not reset its failure history; a validated
+        provider response must clear it, while a failed recovery must escalate."""
         fbs = [{"provider": "openai", "model": "gpt-4o"}]
         agent = _make_agent(fallback_model=fbs)
         snapshot = (agent.provider, agent.model, agent.base_url)
@@ -214,10 +214,27 @@ class TestRateLimitBackoffEscalation:
             agent._try_activate_fallback(reason=FailoverReason.rate_limit)
             assert agent._rate_limit_backoff_count == 2
 
-        # Cooldown expired; the primary restores successfully.
+        # Cooldown expired; selection is a recovery probe, not a success.
         agent._fallback_activated = True
         agent._rate_limited_until = 0
         assert agent._restore_primary_runtime() is True
+        assert agent._rate_limit_backoff_count == 2
+        from agent.fallback_cooldown import note_primary_response_success
+        # A failed recovery escalates, rather than replaying the initial 60s.
+        with (
+            patch("agent.chat_completion_helpers.time.monotonic", return_value=frozen),
+            patch("agent.auxiliary_client.resolve_provider_client", return_value=(_mock_client(), "resolved")),
+        ):
+            agent._try_activate_fallback(reason=FailoverReason.rate_limit)
+        assert agent._rate_limited_until == frozen + 240
+        # A fallback response must not clear the primary's count.
+        note_primary_response_success(agent)
+        assert agent._rate_limit_backoff_count == 3
+        self._back_on_primary(agent, snapshot)
+        # The test fixture has an empty provider/model; use an explicit primary identity.
+        agent.provider = agent._primary_runtime["provider"] = "openrouter"
+        agent.model = agent._primary_runtime["model"] = "test-primary-model"
+        note_primary_response_success(agent)
         assert agent._rate_limit_backoff_count == 0
 
         # The next rate-limit is treated as a fresh first failure: 60s.

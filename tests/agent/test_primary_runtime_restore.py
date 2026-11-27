@@ -171,7 +171,10 @@ class TestRestorePrimaryRuntime:
             assert agent._restore_primary_runtime() is False
             assert agent._restore_primary_runtime() is True
 
-        # Exactly one restore notice, emitted only by the successful retry.
+        # Route selection is not recovery; only a validated response emits a notice.
+        assert len(emitted) == 0
+        from agent.fallback_cooldown import note_primary_response_success
+        note_primary_response_success(agent)
         assert len(emitted) == 1
         assert "primary-model" in emitted[0]
         assert "anthropic/claude-sonnet-4" in emitted[0]

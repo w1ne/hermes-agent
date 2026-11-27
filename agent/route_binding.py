@@ -184,4 +184,5 @@ def reinstall_primary_runtime(
     restore_primary_route_verdicts(agent, rt)
     agent._fallback_activated = False
     agent._fallback_index = 0
-    agent._rate_limit_backoff_count = 0
+    # Restoring a route is only a probe, not proof of recovery. Keep the
+    # consecutive-failure count until a valid provider response arrives.

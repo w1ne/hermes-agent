@@ -1000,6 +1000,9 @@ def restore_primary_runtime(agent) -> bool:
         agent._rate_limited_until = 0
     if getattr(agent, "_rate_limited_until", 0) > time.monotonic():
         return False  # primary still in rate-limit cooldown, stay on fallback
+    from agent.vertex_rate_guard import seconds_blocked
+    if seconds_blocked(primary_provider, primary_model, primary_runtime_base_url) > 0:
+        return False  # another profile has already observed Vertex capacity exhaustion
     blocked, prefetched_pool, prefetched = _primary_reset_gate_blocks(
         agent, rt, primary_provider, primary_runtime_base_url, _matches_primary, _load_primary_pool
     )
@@ -1016,12 +1019,12 @@ def restore_primary_runtime(agent) -> bool:
         reinstall_primary_runtime(
             agent, rt, primary_provider, primary_model, _matches_primary, _load_primary_pool, prefetched_pool, prefetched,
         )
-        logger.info("Primary runtime restored for new turn: %s (%s)", agent.model, agent.provider)
+        logger.info("Primary runtime selected for recovery probe: %s (%s)", agent.model, agent.provider)
         agent._provider_fallback_active = False
         agent._provider_fallback_route = None
         if provider_fallback_active:
-            from agent.fallback_notice import announce_primary_restored
-            announce_primary_restored(agent, previous_model, previous_provider)
+            # Selection does not prove availability; announce only after a valid response.
+            agent._primary_recovery_notice = (previous_model, previous_provider)
         return True
     except Exception as e:
         logger.warning("Failed to restore primary runtime: %s", e)

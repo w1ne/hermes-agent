@@ -83,11 +83,40 @@ def _arm_rate_limit_cooldown(
         backoff_seconds = min(60 * (2 ** backoff_count), 14400)
         source = "exponential fallback"
     agent._rate_limited_until = time.monotonic() + backoff_seconds
+    if reason in (FailoverReason.rate_limit, FailoverReason.upstream_rate_limit):
+        from agent.vertex_rate_guard import record_failure
+        shared_delay = record_failure(
+            getattr(agent, "provider", ""), getattr(agent, "model", ""),
+            str(getattr(agent, "base_url", "") or ""),
+        )
+        if shared_delay:
+            agent._rate_limited_until = max(agent._rate_limited_until, time.monotonic() + shared_delay)
     logging.info(
         "Rate-limit backoff level %d: cooldown %d s (%.1f min, backoff#%d, %s)",
         backoff_count, backoff_seconds, backoff_seconds / 60, backoff_count + 1, source,
     )
     return backoff_seconds
+
+
+def note_primary_response_success(agent) -> None:
+    """Clear the primary's consecutive 429 count only after a valid response.
+
+    Selecting the primary during turn start is a probe, not proof of recovery.
+    A fallback response must never clear the primary's failure history.
+    """
+    if not _on_primary_route(agent):
+        return
+    agent._rate_limit_backoff_count = 0
+    agent._rate_limited_until = 0
+    from agent.vertex_rate_guard import record_success
+    record_success(agent.provider, agent.model, str(agent.base_url or ""))
+    recovery_notice = getattr(agent, "_primary_recovery_notice", None)
+    if recovery_notice:
+        agent._primary_recovery_notice = None
+        previous_model, previous_provider = recovery_notice
+        # Retain upstream suppression of background and unseen-fallback notices.
+        from agent.fallback_notice import announce_primary_restored
+        announce_primary_restored(agent, previous_model, previous_provider)
 
 
 def _mark_entitlement_rejected_model(agent, api_error) -> bool:

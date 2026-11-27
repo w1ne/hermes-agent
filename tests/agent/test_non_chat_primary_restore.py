@@ -60,4 +60,5 @@ def test_restore_still_returns_a_chat_primary():
     _agent, restored, emitted = _restore_after_fallback("qwen3.7-plus")
 
     assert restored is True
-    assert any("Primary model restored" in notice for notice in emitted)
+    assert not any("Primary model restored" in notice for notice in emitted)
+    assert _agent._primary_recovery_notice is not None

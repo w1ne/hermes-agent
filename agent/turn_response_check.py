@@ -212,6 +212,10 @@ def check_api_response(
     start_prompt_cache_warming(agent, api_kwargs, response)
 
     _retry.has_retried_429 = False
+    # Only a validated response proves that a previously rate-limited primary recovered.
+    # This applies to normal and streaming completions and excludes fallback successes.
+    from agent.fallback_cooldown import note_primary_response_success
+    note_primary_response_success(agent)
     # Clearing Nous rate-limit state proves the limit reset so other sessions may resume.
     if agent.provider == "nous":
         try:
